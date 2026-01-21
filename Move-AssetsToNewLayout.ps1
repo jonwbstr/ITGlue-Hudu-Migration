@@ -998,9 +998,12 @@ $assetlayouts=$assetlayouts # | where-object {$_.assetsInLayoutCount -gt 0}
 $assetlayouts = $assetlayouts | Sort-Object Name
 $usablelayouts = $assetlayouts.count
 write-host "$($totallayouts - $usablelayouts) omitted and marked inactive. $totallayouts available layouts."
-$choice=Set-LayoutsForTransfer -allLayouts $assetlayouts
-$sourceassetlayout = $choice.SourceLayout
-$destassetlayout = $choice.DestLayout
+# $choice=Set-LayoutsForTransfer -allLayouts $assetlayouts
+# $sourceassetlayout = $choice.SourceLayout
+# $destassetlayout = $choice.DestLayout
+
+$sourceassetlayout = $assetlayouts | where-object {$_.id -eq 50} | select-object -first 1
+$destassetlayout = $assetlayouts | where-object {$_.id -eq 50} | select-object -first 1
 
 foreach ($layout in @($sourceassetlayout, $destassetlayout)){
     write-host "getting relinkable fields from layout $($layout.name)..."
@@ -1086,8 +1089,17 @@ foreach ($entry in $mapping) {
 }
 
 $mappingtosmooshed = [bool]$($SMOOSHLABELS.count -gt 0)
-$sourceAssets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
-$destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destassetlayout.id}) 
+
+
+# $sourceAssets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
+# $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destassetlayout.id}) 
+
+# source assets are non-linked configs
+# dest assets are the linked configs
+
+$sourceAssets = $( Get-HuduAssets -AssetLayoutId 50 | Where-Object {$($_.fields | where-object {$_.label -eq "Device ITG Configuration"}).value -eq $null})
+$destAssets = $( Get-HuduAssets -AssetLayoutId 50 | Where-Object {$($_.fields | where-object {$_.label -eq "Device ITG Configuration"}).value -ne $null})
+
 if ($sourceassets.count -lt 1) { write-host "NO SOURCE ASSETS!"; exit}
 read-host "$($($addressMapsByDest.GetEnumerator()).count) Location Types in Target press enter to proceed"
 
@@ -1110,13 +1122,18 @@ foreach ($originalasset in $sourceassets) {
     $sourceassetsIDX=$sourceassetsIDX+1
     $linkableToAssetInfo = $null
     write-host "matching existing assets to asset $sourceassetsIDX of $($sourceassets.count) in destination layout assets ($($destassets.count) total) to determine if overlap"
-    $match = $destassets | where-object {$_.company_id -eq $originalasset.company_id -and $_.name -like "*$($originalasset.name)*"} | Select-Object -First 1
+    $match = $destassets | where-object {$_.company_id -eq $originalasset.company_id -and "$($($_.fields | where-object {$_.label -eq "Device ITG Configuration"}).value)" -eq "$($originalasset.id)"} | Select-Object -First 1
+    
+    
+    
     $match = $match.asset ?? $match
     if ($match -and $null -ne $match -and $null -ne $match.fields) {
         write-host "Matched existing asset '$($match.name)' (ID: $($match.id)) in destination layout for source asset '$($originalasset.name)' (ID: $($originalasset.id)) - will compile complete list of fields from both"
         $matchedMap     = FieldListToMap $match.fields
     } else {
         $matchedmap = $null
+        write-host "No existing asset match found in destination layout for source asset '$($originalasset.name)' (ID: $($originalasset.id)) - will create new asset"
+        continue
     }
 
 
