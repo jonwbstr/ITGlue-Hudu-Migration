@@ -1121,9 +1121,21 @@ $sourceassetsIDX=0
 foreach ($originalasset in $sourceassets) {
     $sourceassetsIDX=$sourceassetsIDX+1
     $linkableToAssetInfo = $null
-    write-host "matching existing assets to asset $sourceassetsIDX of $($sourceassets.count) in destination layout assets ($($destassets.count) total) to determine if overlap"
-    $match = $destassets | where-object {$_.company_id -eq $originalasset.company_id -and "$($($_.fields | where-object {$_.label -eq "Device ITG Configuration"}).value)" -eq "$($originalasset.id)"} | Select-Object -First 1
+    $match = $null
+    $desiredConfigID = "$($originalasset.name)"
     
+    write-host "matching existing assets to asset id $desiredConfigID to 'configuration id' field"
+    foreach ($destasset in $($destassets | where-object {$_.company_id -eq $originalasset.company_id})) {
+        $configField = $destasset.fields | where-object {$_.label -eq "Device ITG Configuration"}
+        if ($null -ne $configField -and -not ([string]::IsNullOrWhiteSpace($configField.value))) {
+            $decoded = SafeDecode -InputObject "$($configField.value)"
+            if ("$($decoded.name)" -eq "$desiredConfigID") {
+                $match = $destasset
+                break
+            }
+        }
+    }
+        
     
     
     $match = $match.asset ?? $match
@@ -1312,17 +1324,18 @@ foreach ($originalasset in $sourceassets) {
         }
     }
     try {
-        if ($null -ne $newAssetRequest.id -and $newAssetRequest.id -gt 0){
-            write-host "$($($newAssetRequest | ConvertTo-Json -depth 66).ToString())"
-            $newAsset = $(set-huduasset @newAssetRequest)
-            $newAsset = $newAsset.asset ?? $newAsset
-            write-host "updated asset $($newAsset.id)"
-        } else {
-            write-host "$($($newAssetRequest | ConvertTo-Json -depth 66).ToString())"
-            $newAsset = $(new-huduasset @newAssetRequest)
-            $newAsset = $newAsset.asset ?? $newAsset
-            write-host "Created asset $($newAsset.id)"
-        }
+        # if ($null -ne $newAssetRequest.id -and $newAssetRequest.id -gt 0){
+        $newAssetRequest["Id"] = $match.id
+        write-host "$($($newAssetRequest | ConvertTo-Json -depth 66).ToString())"
+        $newAsset = $(set-huduasset @newAssetRequest)
+        $newAsset = $newAsset.asset ?? $newAsset
+        write-host "updated asset $($newAsset.id)"
+        # } else {
+        #     write-host "$($($newAssetRequest | ConvertTo-Json -depth 66).ToString())"
+        #     $newAsset = $(new-huduasset @newAssetRequest)
+        #     $newAsset = $newAsset.asset ?? $newAsset
+        #     write-host "Created asset $($newAsset.id)"
+        # }
 
 
     } catch {
@@ -1389,6 +1402,10 @@ foreach ($originalasset in $sourceassets) {
             }
         }        
     }
+    set-huduassetarchive -id $originalasset.id -companyid $originalasset.company_id -archive $true
+    
+
+    # read-host "looks good? $($newAsset.name)- $($newAsset.url)"
 }
 Write-host "wrap-up"
 $newlayoutname = $null
