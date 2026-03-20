@@ -51,21 +51,39 @@ except Exception:
 
 APP_NAME = "ITGlue to Hudu Migration Wizard"
 ANSI_ESCAPE_RX = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+RUN_SECTION_FLOW = [
+    ("prepare", "Preparation"),
+    ("companies", "Companies"),
+    ("locations", "Locations"),
+    ("websites", "Websites"),
+    ("configurations", "Configurations"),
+    ("contacts", "Contacts"),
+    ("flex_layouts", "Flexible Asset Layouts"),
+    ("flex_assets", "Flexible Assets"),
+    ("article_shells", "Article Shells"),
+    ("article_bodies", "Article Bodies"),
+    ("passwords", "Passwords"),
+    ("url_rewrites", "URL Rewrites"),
+    ("manual_actions", "Manual Actions"),
+    ("wrapup", "Wrap-Up"),
+]
+RUN_SECTION_INDEX = {key: idx for idx, (key, _label) in enumerate(RUN_SECTION_FLOW)}
 RUN_STAGE_RULES = [
-    (re.compile(r"(Using Lastest Master Branch|Module imported from|Installed and imported HuduAPI|Module 'HuduAPI' imported|Current version .* compatible)", re.IGNORECASE), "Preparing APIs and modules", 8),
-    (re.compile(r"(Loading Previous Companies Migration|Fetching Companies from IT Glue)", re.IGNORECASE), "Migrating companies", 15),
-    (re.compile(r"(Loading Previous Locations Migration|Fetching Locations from IT Glue)", re.IGNORECASE), "Migrating locations", 24),
-    (re.compile(r"(Loading Previous Websites Migration|Fetching Domains from IT Glue)", re.IGNORECASE), "Migrating domains and websites", 32),
-    (re.compile(r"(Loading Previous Configurations Migration|Fetching Configurations from IT Glue)", re.IGNORECASE), "Migrating configurations", 40),
-    (re.compile(r"(Loading Previous Contacts Migration|Fetching Contacts from IT Glue)", re.IGNORECASE), "Migrating contacts", 48),
-    (re.compile(r"(Loading Previous Asset Layouts Migration|Fetching Flexible Asset Layouts from IT Glue)", re.IGNORECASE), "Migrating flexible asset layouts", 56),
-    (re.compile(r"(Loading Previous Asset Migration|Fetching Flexible Assets from IT Glue)", re.IGNORECASE), "Migrating flexible assets", 64),
-    (re.compile(r"Snapshot Point: Assets Migrated Continue\?", re.IGNORECASE), "Creating article shells", 72),
-    (re.compile(r"Snapshot Point: Stub Articles Created Continue\?", re.IGNORECASE), "Populating article content", 78),
-    (re.compile(r"(Loading Previous Paswords Migration|Fetching Passwords from IT Glue|Snapshot Point: Articles Created Continue\?)", re.IGNORECASE), "Migrating passwords", 86),
-    (re.compile(r"Snapshot Point: Passwords Finished\. Continue\?", re.IGNORECASE), "Rewriting ITGlue links", 92),
-    (re.compile(r"Snapshot Point: Company Notes URLs Replaced\. Continue\?", re.IGNORECASE), "Preparing wrap-up tasks", 95),
-    (re.compile(r"IT Glue to Hudu Migration Complete", re.IGNORECASE), "Migration complete", 100),
+    ("prepare", re.compile(r"(Using Lastest Master Branch|Module imported from|Installed and imported HuduAPI|Module 'HuduAPI' imported|Current version .* compatible)", re.IGNORECASE), "Preparing APIs and modules", 8),
+    ("companies", re.compile(r"(Loading Previous Companies Migration|Fetching Companies from IT Glue)", re.IGNORECASE), "Migrating companies", 15),
+    ("locations", re.compile(r"(Loading Previous Locations Migration|Fetching Locations from IT Glue)", re.IGNORECASE), "Migrating locations", 24),
+    ("websites", re.compile(r"(Loading Previous Websites Migration|Fetching Domains from IT Glue)", re.IGNORECASE), "Migrating domains and websites", 32),
+    ("configurations", re.compile(r"(Loading Previous Configurations Migration|Fetching Configurations from IT Glue)", re.IGNORECASE), "Migrating configurations", 40),
+    ("contacts", re.compile(r"(Loading Previous Contacts Migration|Fetching Contacts from IT Glue)", re.IGNORECASE), "Migrating contacts", 48),
+    ("flex_layouts", re.compile(r"(Loading Previous Asset Layouts Migration|Fetching Flexible Asset Layouts from IT Glue)", re.IGNORECASE), "Migrating flexible asset layouts", 56),
+    ("flex_assets", re.compile(r"(Loading Previous Asset Migration|Fetching Flexible Assets from IT Glue|Snapshot Point: Layouts Migrated Continue\?)", re.IGNORECASE), "Migrating flexible assets", 64),
+    ("article_shells", re.compile(r"Snapshot Point: Assets Migrated Continue\?", re.IGNORECASE), "Creating article shells", 72),
+    ("article_bodies", re.compile(r"Snapshot Point: Stub Articles Created Continue\?", re.IGNORECASE), "Populating article content", 78),
+    ("passwords", re.compile(r"(Loading Previous Paswords Migration|Fetching Passwords from IT Glue|Snapshot Point: Articles Created Continue\?)", re.IGNORECASE), "Migrating passwords", 86),
+    ("url_rewrites", re.compile(r"(Snapshot Point: Passwords Finished\. Continue\?|Snapshot Point: Article URLs Replaced\. Continue\?|Snapshot Point: Assets URLs Replaced\. Continue\?|Snapshot Point: Password URLs Replaced\. Continue\?|Snapshot Point: Asset Passwords URLs Replaced\. Continue\?)", re.IGNORECASE), "Rewriting ITGlue links", 92),
+    ("manual_actions", re.compile(r"Snapshot Point: Company Notes URLs Replaced\. Continue\?", re.IGNORECASE), "Generating manual actions report", 95),
+    ("wrapup", re.compile(r"wrapup\s+\d+/9", re.IGNORECASE), "Running wrap-up tasks", 99),
+    ("wrapup", re.compile(r"IT Glue to Hudu Migration Complete", re.IGNORECASE), "Migration complete", 100),
 ]
 
 
@@ -518,6 +536,21 @@ def normalize_user_path(value: str) -> Path:
     return Path(expanded)
 
 
+def parse_csv_ints(value: str) -> List[int]:
+    raw_parts = [part.strip() for part in value.split(",")]
+    values: List[int] = []
+    for part in raw_parts:
+        if not part:
+            continue
+        parsed = int(part)
+        values.append(parsed)
+    return values
+
+
+def ps_int_array(values: List[int]) -> str:
+    return "@(" + ", ".join(str(v) for v in values) + ")"
+
+
 def is_export_path_setting_key(key: str) -> bool:
     k = key.lower()
     return ("export" in k) and ("path" in k)
@@ -594,6 +627,8 @@ class MainWindow(QMainWindow):
         self._run_buffer = ""
         self._tail_buffer = ""
         self._run_mode = "Idle"
+        self._run_section_statuses: Dict[str, str] = {}
+        self._run_section_details: Dict[str, str] = {}
 
         # log tail (Run Output)
         self._tail_timer = QTimer(self)
@@ -709,7 +744,9 @@ class MainWindow(QMainWindow):
         self.manual_actions_path = self.rr / "ManualActions.html"
 
         self._load_readme_local()
+        QTimer.singleShot(0, self._load_readme)
         self._load_template()
+        self._apply_saved_settings()
         self._refresh()
 
     # -----------------------------
@@ -769,7 +806,8 @@ class MainWindow(QMainWindow):
         self.help_copy_btn.clicked.connect(self._copy_github_link)
 
         self.tabs.addTab(w, "Help")
-        self._load_readme()
+        self._load_readme_local()
+        QTimer.singleShot(0, self._load_readme)
 
     def _copy_github_link(self) -> None:
         url = self._github_readme_url()
@@ -879,6 +917,33 @@ class MainWindow(QMainWindow):
         erow.addWidget(export_btn)
         ewrap = QWidget()
         ewrap.setLayout(erow)
+        export_note = QLabel(
+            "NOTE: It is highly recommended to use 7zip to unzip your IT Glue export as Windows "
+            "Explorer does not handle the data well. If you used Windows Explorer to unzip your "
+            "files (or you moved the unzip folder), it's recommended to unzip it again using 7zip "
+            "or similar."
+        )
+        export_note.setWordWrap(True)
+        export_note.setStyleSheet("color: #6b7280;")
+        export_stack = QWidget()
+        export_stack_layout = QVBoxLayout(export_stack)
+        export_stack_layout.setContentsMargins(0, 0, 0, 0)
+        export_stack_layout.setSpacing(6)
+        export_stack_layout.addWidget(ewrap)
+        export_stack_layout.addWidget(export_note)
+
+        internal_company_note = QLabel(
+            'Type your "main" company as it is exactly in IT Glue. This is how we can create '
+            "documents in the Central KB."
+        )
+        internal_company_note.setWordWrap(True)
+        internal_company_note.setStyleSheet("color: #6b7280;")
+        internal_company_stack = QWidget()
+        internal_company_stack_layout = QVBoxLayout(internal_company_stack)
+        internal_company_stack_layout.setContentsMargins(0, 0, 0, 0)
+        internal_company_stack_layout.setSpacing(6)
+        internal_company_stack_layout.addWidget(self.internal_company)
+        internal_company_stack_layout.addWidget(internal_company_note)
 
         self.cb_config_prefix = QCheckBox("Use prefix")
         self.cb_config_prefix.setChecked(True)
@@ -898,6 +963,32 @@ class MainWindow(QMainWindow):
         fa_prefix_wrap = QWidget()
         fa_prefix_wrap.setLayout(fa_prefix_row)
 
+        prefix_note_text = (
+            "Adding an asset layout prefix is recommended if you already have data in Hudu and want "
+            "to prevent collisions. If your Hudu instance is new (or has no conflicting asset layouts) "
+            "you can safely uncheck this option."
+        )
+
+        config_prefix_note = QLabel(prefix_note_text)
+        config_prefix_note.setWordWrap(True)
+        config_prefix_note.setStyleSheet("color: #6b7280;")
+        config_prefix_stack = QWidget()
+        config_prefix_stack_layout = QVBoxLayout(config_prefix_stack)
+        config_prefix_stack_layout.setContentsMargins(0, 0, 0, 0)
+        config_prefix_stack_layout.setSpacing(6)
+        config_prefix_stack_layout.addWidget(config_prefix_wrap)
+        config_prefix_stack_layout.addWidget(config_prefix_note)
+
+        fa_prefix_note = QLabel(prefix_note_text)
+        fa_prefix_note.setWordWrap(True)
+        fa_prefix_note.setStyleSheet("color: #6b7280;")
+        fa_prefix_stack = QWidget()
+        fa_prefix_stack_layout = QVBoxLayout(fa_prefix_stack)
+        fa_prefix_stack_layout.setContentsMargins(0, 0, 0, 0)
+        fa_prefix_stack_layout.setSpacing(6)
+        fa_prefix_stack_layout.addWidget(fa_prefix_wrap)
+        fa_prefix_stack_layout.addWidget(fa_prefix_note)
+
         def toggle_prefix_inputs() -> None:
             self.config_prefix.setEnabled(self.cb_config_prefix.isChecked())
             self.fa_prefix.setEnabled(self.cb_fa_prefix.isChecked())
@@ -913,10 +1004,10 @@ class MainWindow(QMainWindow):
         cf.addRow("ITGlue API Key:", itg_wrap)
         cf.addRow("Hudu Base Domain:", self.hudu_base)
         cf.addRow("Hudu API Key:", hudu_wrap)
-        cf.addRow("Internal Company (name):", self.internal_company)
-        cf.addRow("Configs asset layout prefix:", config_prefix_wrap)
-        cf.addRow("Flexible asset layout prefix:", fa_prefix_wrap)
-        cf.addRow("ITGlue Export Path:", ewrap)
+        cf.addRow("Internal Company (name):", internal_company_stack)
+        cf.addRow("Configs asset layout prefix:", config_prefix_stack)
+        cf.addRow("Flexible asset layout prefix:", fa_prefix_stack)
+        cf.addRow("ITGlue Export Path:", export_stack)
         layout.addWidget(core)
 
         common = self._group("Common Options")
@@ -924,22 +1015,74 @@ class MainWindow(QMainWindow):
 
         self.cb_resume = QCheckBox("Resume previous run if logs exist")
         self.cb_noninteractive = QCheckBox("Non-interactive mode (recommended for GUI)")
-        self.cb_split_configs = QCheckBox("Split configurations into individual layouts")
         self.cb_include_itgid = QCheckBox("Include ITGlue ID in migrated items")
         self.cb_scoped = QCheckBox("Scoped migration (advanced/testing)")
         self.cb_merge_org_types = QCheckBox("Merge selected org types into a single Hudu company")
         self.cb_skip_integrator = QCheckBox("Skip integrator ('auto') layouts")
+        self.cb_skip_integrator.setChecked(False)
+        self.scoped_ids = QLineEdit("")
+        self.scoped_ids.setPlaceholderText("Comma-delimited example: 1, 4, 7")
+        self.merge_org_type_ids = QLineEdit("")
+        self.merge_org_type_ids.setPlaceholderText("Comma-delimited example: 1, 3")
+        advanced_note_text = "Note: these are NOT IT Glue IDs, this is an advanced option."
+        skip_integrator_note_text = (
+            'Check this option to skip asset layouts that were created by integrations '
+            '(those that contain "auto").'
+        )
 
-        for cb in (
-            self.cb_resume,
-            self.cb_noninteractive,
-            self.cb_split_configs,
-            self.cb_include_itgid,
-            self.cb_scoped,
-            self.cb_merge_org_types,
-            self.cb_skip_integrator,
-        ):
-            cl.addWidget(cb)
+        self.scoped_note = QLabel(advanced_note_text)
+        self.scoped_note.setWordWrap(True)
+        self.scoped_note.setStyleSheet("color: #6b7280;")
+
+        self.merge_org_types_note = QLabel(advanced_note_text)
+        self.merge_org_types_note.setWordWrap(True)
+        self.merge_org_types_note.setStyleSheet("color: #6b7280;")
+
+        self.skip_integrator_note = QLabel(skip_integrator_note_text)
+        self.skip_integrator_note.setWordWrap(True)
+        self.skip_integrator_note.setStyleSheet("color: #6b7280;")
+        self.skip_integrator_note_wrap = QWidget()
+        skip_integrator_note_layout = QVBoxLayout(self.skip_integrator_note_wrap)
+        skip_integrator_note_layout.setContentsMargins(24, 0, 0, 0)
+        skip_integrator_note_layout.setSpacing(0)
+        skip_integrator_note_layout.addWidget(self.skip_integrator_note)
+
+        cl.addWidget(self.cb_resume)
+        cl.addWidget(self.cb_noninteractive)
+        cl.addWidget(self.cb_include_itgid)
+
+        self.scoped_ids_wrap = QWidget()
+        scoped_ids_layout = QVBoxLayout(self.scoped_ids_wrap)
+        scoped_ids_layout.setContentsMargins(24, 0, 0, 0)
+        scoped_ids_layout.setSpacing(6)
+        scoped_ids_form = QFormLayout()
+        scoped_ids_form.setContentsMargins(0, 0, 0, 0)
+        scoped_ids_form.addRow("Scoped company numbers (comma-delimited):", self.scoped_ids)
+        scoped_ids_layout.addLayout(scoped_ids_form)
+        scoped_ids_layout.addWidget(self.scoped_note)
+
+        self.merge_org_type_ids_wrap = QWidget()
+        merge_org_type_ids_layout = QVBoxLayout(self.merge_org_type_ids_wrap)
+        merge_org_type_ids_layout.setContentsMargins(24, 0, 0, 0)
+        merge_org_type_ids_layout.setSpacing(6)
+        merge_org_type_ids_form = QFormLayout()
+        merge_org_type_ids_form.setContentsMargins(0, 0, 0, 0)
+        merge_org_type_ids_form.addRow("Org type numbers (comma-delimited):", self.merge_org_type_ids)
+        merge_org_type_ids_layout.addLayout(merge_org_type_ids_form)
+        merge_org_type_ids_layout.addWidget(self.merge_org_types_note)
+
+        cl.addWidget(self.cb_skip_integrator)
+        cl.addWidget(self.skip_integrator_note_wrap)
+
+        def toggle_advanced_id_inputs() -> None:
+            scoped_visible = self.cb_scoped.isChecked()
+            merge_visible = self.cb_merge_org_types.isChecked()
+            self.scoped_ids_wrap.setVisible(scoped_visible)
+            self.merge_org_type_ids_wrap.setVisible(merge_visible)
+
+        self.cb_scoped.stateChanged.connect(lambda _=None: toggle_advanced_id_inputs())
+        self.cb_merge_org_types.stateChanged.connect(lambda _=None: toggle_advanced_id_inputs())
+        toggle_advanced_id_inputs()
         layout.addWidget(common)
 
         imp = self._group("What to Import")
@@ -950,35 +1093,57 @@ class MainWindow(QMainWindow):
         self.cb_domains = QCheckBox("Domains")
         self.cb_disable_webmon = QCheckBox("Disable website monitoring (recommended)")
         self.cb_configurations = QCheckBox("Configurations")
+        self.cb_split_configs = QCheckBox("Split configurations into individual Asset Layouts")
+        self.split_configs_note = QLabel(
+            'NOTE: when splitting configurations, every configuration type is split into a separate '
+            'Asset Layout. Additional cleanup may be required. Leave unchecked if you want '
+            '"Configurations" to come over the same as they are in IT Glue currently.'
+        )
+        self.split_configs_note.setWordWrap(True)
+        self.split_configs_note.setStyleSheet("color: #6b7280;")
         self.cb_contacts = QCheckBox("Contacts")
         self.cb_flex_layouts = QCheckBox("Flexible Asset Layouts")
         self.cb_flex_assets = QCheckBox("Flexible Assets")
         self.cb_articles = QCheckBox("Articles / Docs")
         self.cb_passwords = QCheckBox("Passwords")
 
-        for cb in (
-            self.cb_companies,
-            self.cb_locations,
-            self.cb_domains,
-            self.cb_disable_webmon,
-            self.cb_configurations,
-            self.cb_contacts,
-            self.cb_flex_layouts,
-            self.cb_flex_assets,
-            self.cb_articles,
-            self.cb_passwords,
-        ):
-            il.addWidget(cb)
+        self.split_configs_wrap = QWidget()
+        split_configs_layout = QVBoxLayout(self.split_configs_wrap)
+        split_configs_layout.setContentsMargins(24, 0, 0, 0)
+        split_configs_layout.setSpacing(6)
+        split_configs_layout.addWidget(self.cb_split_configs)
+        split_configs_layout.addWidget(self.split_configs_note)
+
+        il.addWidget(self.cb_companies)
+        il.addWidget(self.cb_locations)
+        il.addWidget(self.cb_domains)
+        il.addWidget(self.cb_disable_webmon)
+        il.addWidget(self.cb_configurations)
+        il.addWidget(self.split_configs_wrap)
+        il.addWidget(self.cb_contacts)
+        il.addWidget(self.cb_flex_layouts)
+        il.addWidget(self.cb_flex_assets)
+        il.addWidget(self.cb_articles)
+        il.addWidget(self.cb_passwords)
+
+        def toggle_split_config_options() -> None:
+            configs_visible = self.cb_configurations.isChecked()
+            self.split_configs_wrap.setVisible(configs_visible)
+            self.split_configs_note.setVisible(configs_visible and self.cb_split_configs.isChecked())
+
+        self.cb_configurations.stateChanged.connect(lambda _=None: toggle_split_config_options())
+        self.cb_split_configs.stateChanged.connect(lambda _=None: toggle_split_config_options())
+        toggle_split_config_options()
         layout.addWidget(imp)
 
         adv = self._group("Advanced settings (uncommon)")
-        af = QFormLayout(adv)
+        al = QVBoxLayout(adv)
 
         self.cb_custom_branded = QCheckBox('customBrandedDomain (check for "y")')
         self.cb_custom_branded.setChecked(False)
 
         self.cb_flags = QCheckBox("Apply flags and flag types (requires Hudu ≥ 2.40)")
-        self.cb_flags.setChecked(True)
+        self.cb_flags.setChecked(False)
 
         self.itg_custom_domains = QLineEdit("")
         self.itg_custom_domains.setEnabled(False)
@@ -990,9 +1155,16 @@ class MainWindow(QMainWindow):
 
         self.cb_custom_branded.stateChanged.connect(lambda _=None: toggle_custom_domains())
 
+        al.addWidget(self.cb_scoped)
+        al.addWidget(self.scoped_ids_wrap)
+        al.addWidget(self.cb_merge_org_types)
+        al.addWidget(self.merge_org_type_ids_wrap)
+
+        af = QFormLayout()
         af.addRow("$settings.customBrandedDomain:", self.cb_custom_branded)
         af.addRow("$settings.ITGCustomDomains:", self.itg_custom_domains)
         af.addRow("apply flags/flag types:", self.cb_flags)
+        al.addLayout(af)
         layout.addWidget(adv)
 
         files = self._group("Generated Files")
@@ -1005,10 +1177,13 @@ class MainWindow(QMainWindow):
         self.report_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.settings_label = QLabel(str(self._settings_file_path()))
         self.settings_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.loaded_settings_label = QLabel(self._default_loaded_settings_text())
+        self.loaded_settings_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         f2.addRow("Run Script:", self.output_label)
         f2.addRow("Run Log:", self.log_label)
         f2.addRow("Manual Actions Report:", self.report_label)
         f2.addRow("Saved Settings:", self.settings_label)
+        f2.addRow("Loaded Settings From:", self.loaded_settings_label)
         layout.addWidget(files)
 
         primary_btn_row = QHBoxLayout()
@@ -1061,6 +1236,8 @@ class MainWindow(QMainWindow):
             self.fa_prefix,
             self.export_le,
             self.itg_custom_domains,
+            self.scoped_ids,
+            self.merge_org_type_ids,
         ):
             w.textChanged.connect(self._refresh)
 
@@ -1122,6 +1299,22 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.run_detail_label)
         layout.addWidget(self.run_progress)
 
+        self.run_sections_label = QLabel(f"Sections: 0/{len(RUN_SECTION_FLOW)} complete")
+        self.run_sections_view = QPlainTextEdit()
+        self.run_sections_view.setReadOnly(True)
+        self.run_sections_view.setMaximumHeight(215)
+        self.run_sections_view.setStyleSheet(
+            "QPlainTextEdit {"
+            " background-color: #f8fafc;"
+            " color: #1f2937;"
+            " border: 1px solid #d5dde8;"
+            " font-family: Consolas, 'Cascadia Mono', monospace;"
+            " font-size: 9.5pt;"
+            "}"
+        )
+        layout.addWidget(self.run_sections_label)
+        layout.addWidget(self.run_sections_view)
+
         run_btn_row = QHBoxLayout()
         self.btn_stop_run = QPushButton("Stop In-App Run")
         self.btn_stop_run.setEnabled(False)
@@ -1152,6 +1345,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.output_view)
 
         self.tabs.addTab(w, "Run Output")
+        self._reset_run_sections()
 
     # -----------------------------
     # Load template defaults
@@ -1162,6 +1356,7 @@ class MainWindow(QMainWindow):
         self.output_label.setText(str(self.output_path))
         self.log_label.setText(str(self.run_log_path))
         self.report_label.setText(str(self.manual_actions_path))
+        self._set_loaded_settings_source(None)
         self.btn_open_script.setEnabled(self.output_path.exists())
         self.btn_reveal_script.setEnabled(self.output_path.parent.exists())
 
@@ -1227,7 +1422,7 @@ class MainWindow(QMainWindow):
         self.cb_custom_branded.setChecked(cbd == "y")
         self.itg_custom_domains.setText(get("settings", "ITGCustomDomains") or "")
         self.itg_custom_domains.setEnabled(self.cb_custom_branded.isChecked())
-        self.cb_flags.setChecked((get("var", "allowSettingFlagsAndTypes") or "True").strip().lower() in ("true", "$true", "1", "yes", "y"))
+        self.cb_flags.setChecked((get("var", "allowSettingFlagsAndTypes") or "False").strip().lower() in ("true", "$true", "1", "yes", "y"))
 
     # -----------------------------
     # Build output ps1
@@ -1284,7 +1479,10 @@ class MainWindow(QMainWindow):
             set_var("NonInteractive", "2" if self.cb_noninteractive.isChecked() else "1")
 
         if ("settings", "SplitConfigurations") in self.entries:
-            set_setting("SplitConfigurations", "$true" if self.cb_split_configs.isChecked() else "$false")
+            set_setting(
+                "SplitConfigurations",
+                "$true" if self.cb_configurations.isChecked() and self.cb_split_configs.isChecked() else "$false",
+            )
         if ("settings", "IncludeITGlueID") in self.entries:
             set_setting("IncludeITGlueID", "$true" if self.cb_include_itgid.isChecked() else "$false")
 
@@ -1294,6 +1492,11 @@ class MainWindow(QMainWindow):
             set_var("MergedOrganizationTypes", "2" if self.cb_merge_org_types.isChecked() else "1")
         if ("var", "skipIntegratorLayouts") in self.entries:
             set_var("skipIntegratorLayouts", "$true" if self.cb_skip_integrator.isChecked() else "$false")
+
+        scoped_ids_text = self.scoped_ids.text().strip()
+        if self.cb_scoped.isChecked() and scoped_ids_text:
+            prescoped_values = [value - 1 for value in parse_csv_ints(scoped_ids_text)]
+            ensure_var("Prescoped", ps_int_array(prescoped_values))
 
         def set_1_2(name: str, checked: bool) -> None:
             if ("var", name) in self.entries:
@@ -1335,6 +1538,22 @@ class MainWindow(QMainWindow):
         itg_len = len(self.itg_key.text().strip())
         if not (100 <= itg_len <= 105):
             warns.append(f"ITGlue API key length is unusual ({itg_len}). Expected is usually around 100-105 characters.")
+
+        if self.cb_scoped.isChecked() and self.scoped_ids.text().strip():
+            try:
+                scoped_values = parse_csv_ints(self.scoped_ids.text().strip())
+                if any(value < 1 for value in scoped_values):
+                    errs.append("Scoped company numbers must be positive, comma-delimited values.")
+            except ValueError:
+                errs.append("Scoped company numbers must be comma-delimited integers.")
+
+        if self.cb_merge_org_types.isChecked() and self.merge_org_type_ids.text().strip():
+            try:
+                merge_values = parse_csv_ints(self.merge_org_type_ids.text().strip())
+                if any(value < 1 for value in merge_values):
+                    errs.append("Org type numbers must be positive, comma-delimited values.")
+            except ValueError:
+                errs.append("Org type numbers must be comma-delimited integers.")
 
         req_map = {
             "ImportCompanies": "organizations.csv",
@@ -1411,6 +1630,17 @@ class MainWindow(QMainWindow):
     def _legacy_settings_file_path(self) -> Path:
         return app_data_dir() / "saved_settings.json"
 
+    def _default_loaded_settings_text(self) -> str:
+        if self._legacy_settings_file_path().exists():
+            return "(none; using environ.example defaults; legacy AppData settings ignored)"
+        return "(none; using environ.example defaults)"
+
+    def _set_loaded_settings_source(self, path: Optional[Path], message: Optional[str] = None) -> None:
+        if path is not None:
+            self.loaded_settings_label.setText(str(path))
+            return
+        self.loaded_settings_label.setText(message or self._default_loaded_settings_text())
+
     def _collect_current_settings(self) -> Dict[str, object]:
         mapping = {
             "itg_url": self.itg_url.text().strip(),
@@ -1423,6 +1653,8 @@ class MainWindow(QMainWindow):
             "hudu_key": self.hudu_key.text().strip(),
             "export_path": self.export_le.text().strip(),
             "custom_domains": self.itg_custom_domains.text().strip(),
+            "scoped_ids": self.scoped_ids.text().strip(),
+            "merge_org_type_ids": self.merge_org_type_ids.text().strip(),
         }
         checkboxes = {
             "resume": self.cb_resume,
@@ -1454,16 +1686,12 @@ class MainWindow(QMainWindow):
     def _apply_saved_settings(self) -> None:
         path = self._settings_file_path()
         if not path.exists():
-            legacy = self._legacy_settings_file_path()
-            if legacy.exists():
-                path = legacy
-            else:
-                return
-        if not path.exists():
+            self._set_loaded_settings_source(None)
             return
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
+            self._set_loaded_settings_source(None, f"(failed to load {path.name}; using environ.example defaults)")
             return
 
         field_map = {
@@ -1477,6 +1705,8 @@ class MainWindow(QMainWindow):
             "custom_domains": self.itg_custom_domains,
             "itg_key": self.itg_key,
             "hudu_key": self.hudu_key,
+            "scoped_ids": self.scoped_ids,
+            "merge_org_type_ids": self.merge_org_type_ids,
         }
         for key, widget in field_map.items():
             value = data.get(key)
@@ -1510,6 +1740,7 @@ class MainWindow(QMainWindow):
             if isinstance(data.get(key), bool):
                 widget.setChecked(data[key])
 
+        self._set_loaded_settings_source(path)
         self._refresh()
 
     def _save_settings(self) -> None:
@@ -1520,16 +1751,17 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", f"Could not save settings: {exc}")
             return
+        self._set_loaded_settings_source(path)
         QMessageBox.information(self, "Saved", f"Settings saved to {path}")
 
     def _embedded_run_blockers(self) -> List[str]:
         blockers: List[str] = []
         if not self.cb_noninteractive.isChecked():
             blockers.append("Enable Non-interactive mode for in-app runs.")
-        if self.cb_scoped.isChecked():
-            blockers.append("Scoped migration still requires interactive company selection in PowerShell.")
+        if self.cb_scoped.isChecked() and not self.scoped_ids.text().strip():
+            blockers.append("Scoped migration needs scoped company numbers for in-app runs, or use PowerShell to choose them interactively.")
         if self.cb_merge_org_types.isChecked():
-            blockers.append("Merge selected org types still requires interactive selection in PowerShell.")
+            blockers.append("Merge selected org types still needs interactive PowerShell prompts. Use Run in PowerShell for that option.")
         return blockers
 
     def _confirm_readme_acknowledgement(self) -> bool:
@@ -1578,13 +1810,21 @@ class MainWindow(QMainWindow):
     def _confirm_resume_run(self) -> bool:
         if not self._has_previous_run_state():
             return True
+
+        resume_enabled = self.cb_resume.isChecked()
         box = QMessageBox(self)
         box.setWindowTitle("Previous run detected")
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setText("Previous run data was found. The migration run will resume from the last successful section.")
-        box.setInformativeText("Continuing will not restart from the beginning.")
-        yes_btn = box.addButton("Yes", QMessageBox.ButtonRole.YesRole)
-        no_btn = box.addButton("No", QMessageBox.ButtonRole.NoRole)
+        if resume_enabled:
+            box.setText("Previous run data was found. This migration is configured to resume from the last successful section.")
+            box.setInformativeText("Continuing will not restart from the beginning.")
+            continue_text = "Resume"
+        else:
+            box.setText("Previous run data was found, but Resume previous run is turned off.")
+            box.setInformativeText("Continue to start a fresh run with resume disabled, or clear the old run state first.")
+            continue_text = "Continue"
+        yes_btn = box.addButton(continue_text, QMessageBox.ButtonRole.YesRole)
+        no_btn = box.addButton("Cancel", QMessageBox.ButtonRole.NoRole)
         help_btn = box.addButton("Help", QMessageBox.ButtonRole.HelpRole)
         box.setDefaultButton(no_btn)
         box.exec()
@@ -1633,7 +1873,6 @@ class MainWindow(QMainWindow):
             folder.mkdir(parents=True, exist_ok=True)
         QMessageBox.information(self, "Previous run cleared", "Previous run files and logs were deleted.")
         self._refresh()
-        return clicked == yes_btn
 
     def _select_output_tab(self) -> None:
         for i in range(self.tabs.count()):
@@ -1649,12 +1888,55 @@ class MainWindow(QMainWindow):
         self.btn_open_script.setEnabled(self.output_path.exists())
         self.btn_reveal_script.setEnabled(self.output_path.parent.exists())
 
+    def _reset_run_sections(self) -> None:
+        self._run_section_statuses = {key: "pending" for key, _label in RUN_SECTION_FLOW}
+        self._run_section_details = {}
+        self._refresh_run_sections_view()
+
+    def _refresh_run_sections_view(self) -> None:
+        completed = 0
+        lines: List[str] = []
+        for key, label in RUN_SECTION_FLOW:
+            status = self._run_section_statuses.get(key, "pending")
+            marker = {"done": "[x]", "running": "[>]", "pending": "[ ]"}.get(status, "[ ]")
+            detail = self._run_section_details.get(key, "")
+            if status == "running" and detail and detail != label:
+                lines.append(f"{marker} {label} - {detail}")
+            else:
+                lines.append(f"{marker} {label}")
+            if status == "done":
+                completed += 1
+        self.run_sections_label.setText(f"Sections: {completed}/{len(RUN_SECTION_FLOW)} complete")
+        self.run_sections_view.setPlainText("\n".join(lines))
+
+    def _set_active_run_section(self, section_key: str, detail: Optional[str] = None) -> None:
+        if section_key not in RUN_SECTION_INDEX:
+            return
+        active_index = RUN_SECTION_INDEX[section_key]
+        for idx, (key, _label) in enumerate(RUN_SECTION_FLOW):
+            if idx < active_index:
+                self._run_section_statuses[key] = "done"
+            elif idx == active_index:
+                self._run_section_statuses[key] = "running"
+            elif self._run_section_statuses.get(key) != "done":
+                self._run_section_statuses[key] = "pending"
+        if detail:
+            self._run_section_details[section_key] = detail
+        self._refresh_run_sections_view()
+
+    def _complete_run_sections(self) -> None:
+        for key, _label in RUN_SECTION_FLOW:
+            self._run_section_statuses[key] = "done"
+        self._refresh_run_sections_view()
+
     def _prepare_run_output(self, mode: str, detail: str) -> None:
         self._run_mode = mode
         self._tail_timer.stop()
         self._tail_pos = 0
         self._tail_buffer = ""
         self._run_buffer = ""
+        self._reset_run_sections()
+        self._set_active_run_section("prepare", detail)
         self._select_output_tab()
         self.output_view.clear()
         self.run_mode_label.setText(f"Run Mode: {mode}")
@@ -1664,12 +1946,14 @@ class MainWindow(QMainWindow):
         self.btn_open_log.setEnabled(True)
         self.btn_open_report.setEnabled(False)
 
-    def _set_run_stage(self, label: str, progress: int, detail: Optional[str] = None) -> None:
+    def _set_run_stage(self, label: str, progress: int, detail: Optional[str] = None, section_key: Optional[str] = None) -> None:
         self.run_stage_label.setText(f"Stage: {label}")
         if progress >= self.run_progress.value():
             self.run_progress.setValue(min(progress, 100))
         if detail:
             self.run_detail_label.setText(f"Current item: {detail}")
+        if section_key:
+            self._set_active_run_section(section_key, detail or label)
 
     def _append_to_run_log(self, line: str) -> None:
         try:
@@ -1707,14 +1991,16 @@ class MainWindow(QMainWindow):
         if wrapup:
             step = int(wrapup.group(1))
             progress = min(99, 95 + round(step * 5 / 9))
-            self._set_run_stage(f"Wrap-up ({step}/9)", progress, text)
+            self._set_run_stage(f"Wrap-up ({step}/9)", progress, text, section_key="wrapup")
             return
 
-        for pattern, label, progress in RUN_STAGE_RULES:
+        for section_key, pattern, label, progress in RUN_STAGE_RULES:
             if pattern.search(text):
-                self._set_run_stage(label, progress, text)
+                self._set_run_stage(label, progress, text, section_key=section_key)
                 if progress >= 100 and self.manual_actions_path.exists():
                     self.btn_open_report.setEnabled(True)
+                if progress >= 100:
+                    self._complete_run_sections()
                 break
 
         if text.startswith("Starting "):
@@ -1806,6 +2092,7 @@ class MainWindow(QMainWindow):
         if exit_code == 0:
             self.run_mode_label.setText("Run Mode: In-App PowerShell (completed)")
             self._set_run_stage("Migration finished", 100, "PowerShell process exited cleanly.")
+            self._complete_run_sections()
         else:
             self.run_mode_label.setText("Run Mode: In-App PowerShell (stopped)")
             self.run_detail_label.setText(f"Current item: PowerShell exited with code {exit_code}. Review the output and log.")

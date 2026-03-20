@@ -113,6 +113,7 @@ Set-Location $repoRoot
 $logDir = Join-Path $uiDir "build_logs"
 Ensure-Dir $logDir
 $logPath = Join-Path $logDir ("build_{0:yyyyMMdd_HHmmss}.log" -f (Get-Date))
+$script:BuildFailed = $false
 
 Log "Running script: $scriptPath"
 Log "Repo root: $repoRoot"
@@ -131,6 +132,26 @@ try {
   foreach ($f in $required) {
     $p = Join-Path $repoRoot $f
     if (-not (Test-Path $p)) { throw "Missing required repo file: $f ($p)" }
+  }
+
+  $sensitiveArtifacts = @(
+    "migration-gui-settings.json",
+    "migrationrun.ps1",
+    "migrationrun.log",
+    "ManualActions.html",
+    "debug\settings\settings.json"
+  )
+  $foundSensitiveArtifacts = foreach ($artifact in $sensitiveArtifacts) {
+    $artifactPath = Join-Path $repoRoot $artifact
+    if (Test-Path $artifactPath) {
+      $artifactPath
+    }
+  }
+  if ($foundSensitiveArtifacts) {
+    Log "WARNING: Sensitive local artifacts were found in the repo root. Review before packaging or sharing:"
+    foreach ($artifactPath in $foundSensitiveArtifacts) {
+      Log "  - $artifactPath"
+    }
   }
 
   # ---------- find python ----------
@@ -190,11 +211,6 @@ try {
   Log "Preparing EXE icon..."
   New-AppIconFromPng -PngPath $appIconPng -IcoPath $appIconIco
 
-  # ---------- clean published outputs in repo root ----------
-  Log "Cleaning published outputs in repo root..."
-  Remove-WithRetry (Join-Path $repoRoot "_internal") -Retries 10 -DelayMs 600
-  Remove-WithRetry (Join-Path $repoRoot "ITGlue-Hudu-Migration-GUI.exe") -Retries 10 -DelayMs 600
-
   # ---------- build into stage ----------
   Log "Running PyInstaller (staging)..."
   Invoke-Python -m PyInstaller `
@@ -218,8 +234,39 @@ try {
 
   # ---------- publish to repo root ----------
   Log "Publishing into repo root..."
-  Move-Item -LiteralPath $builtExe -Destination (Join-Path $repoRoot "ITGlue-Hudu-Migration-GUI.exe") -Force
-  Move-Item -LiteralPath $builtInternal -Destination (Join-Path $repoRoot "_internal") -Force
+  $publishedExe = Join-Path $repoRoot "ITGlue-Hudu-Migration-GUI.exe"
+  $publishedInternal = Join-Path $repoRoot "_internal"
+  $publishBackup = Join-Path $outRoot "_publish_backup"
+  $backupExe = Join-Path $publishBackup "ITGlue-Hudu-Migration-GUI.exe"
+  $backupInternal = Join-Path $publishBackup "_internal"
+  Remove-WithRetry $publishBackup -Retries 10 -DelayMs 600
+  Ensure-Dir $publishBackup
+
+  if (Test-Path $publishedExe) {
+    Move-Item -LiteralPath $publishedExe -Destination $backupExe -Force
+  }
+  if (Test-Path $publishedInternal) {
+    Move-Item -LiteralPath $publishedInternal -Destination $backupInternal -Force
+  }
+
+  try {
+    Move-Item -LiteralPath $builtExe -Destination $publishedExe -Force
+    Move-Item -LiteralPath $builtInternal -Destination $publishedInternal -Force
+  } catch {
+    if (Test-Path $publishedExe) {
+      Remove-Item -LiteralPath $publishedExe -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $publishedInternal) {
+      Remove-WithRetry $publishedInternal -Retries 10 -DelayMs 600
+    }
+    if (Test-Path $backupExe) {
+      Move-Item -LiteralPath $backupExe -Destination $publishedExe -Force
+    }
+    if (Test-Path $backupInternal) {
+      Move-Item -LiteralPath $backupInternal -Destination $publishedInternal -Force
+    }
+    throw
+  }
 
   if ($CLEAN_BUILD_OUT_AFTER_SUCCESS) {
   Log "Cleaning ui\build_out (post-success)..."
@@ -239,6 +286,7 @@ try {
   Log "Run it from: $(Join-Path $repoRoot "ITGlue-Hudu-Migration-GUI.exe")"
 }
 catch {
+  $script:BuildFailed = $true
   Log ""
   Log "❌ BUILD FAILED"
   Log $_.Exception.Message
@@ -247,4 +295,7 @@ catch {
 finally {
   try { Stop-Transcript | Out-Null } catch {}
   Read-Host "Press Enter to close"
+  if ($script:BuildFailed) {
+    exit 1
+  }
 }

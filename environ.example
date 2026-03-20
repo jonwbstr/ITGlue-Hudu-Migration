@@ -70,7 +70,7 @@ $resumeQuestion             = "yes"
 $reenterChoice              = "Continue"
 
 # Apply flags and flag types during the migration; requires Hudu 2.40+
-$allowSettingFlagsAndTypes  = $true
+$allowSettingFlagsAndTypes  = $false
 
 # Individual Import Options, below, (1-yes, 2-no)
 $ImportCompanies            = 1
@@ -98,7 +98,7 @@ $companyPasswordFolderAttributionMove = $null # $false or $true- If using global
 $ScopedMigration            = 1
 $MergedOrganizationTypes    = 1
 # do you want to skip flexible asset layouts from integrators? they are generally have the phrase '(auto)' in the name
-$skipIntegratorLayouts = $true
+$skipIntegratorLayouts = $false
 
 # pre-designated array/list of prescoped/preselected companies for scoped migration (typically for faster testing)
 # prescoped Companies

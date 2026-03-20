@@ -19,3 +19,12 @@ cookiejar.json
 tempdownloads
 tempdownloads*
 tempdownloads\*
+
+# Local/generated UI artifacts
+migration-gui-settings.json
+migrationrun.ps1
+migrationrun.log
+ui/build_logs/
+ui/__pycache__/
+CODEX_HANDOFF.md
+NEXT_STEPS.md
