@@ -78,20 +78,43 @@ function Get-HuduRelationObject {
 }
 
 
-$FreshITGAssets= $MatchedAssets |% { Get-ITGlueFlexibleAssets -id $_.ITGObject.id -include related_items}
-$RelatedAssets = $FreshITGAssets |? {$_.data.relationships.'related-items'.data}
+$AssetRelationsToCreate = @()
+$ConfigurationRelationsToCreate = @()
+$PasswordRelationsToCreate = @()
+$FreshITGAssets = @()
+$FreshConfigurations = @()
+$FreshPasswords = @()
+$RelatedAssets = @()
+$RelatedConfigurations = @()
+$RelatedPasswords = @()
 
+$MatchedAssetsWithIds = @($MatchedAssets | Where-Object {$_.ITGObject -and $_.ITGObject.id})
+if ($MatchedAssetsWithIds.Count -gt 0) {
+  $FreshITGAssets = @($MatchedAssetsWithIds | ForEach-Object { Get-ITGlueFlexibleAssets -id $_.ITGObject.id -include related_items })
+  $RelatedAssets = @($FreshITGAssets | Where-Object {$_.data.relationships.'related-items'.data})
+}
 
-$FreshConfigurations = $MatchedConfigurations | % {Get-ITGlueConfigurations -id $_.itgobject.id -include related_items}
-$RelatedConfigurations = $FreshConfigurations |? {$_.data.relationships.'related-items'.data}
+$MatchedConfigurationsWithIds = @($MatchedConfigurations | Where-Object {$_.ITGObject -and $_.ITGObject.id})
+if ($MatchedConfigurationsWithIds.Count -gt 0) {
+  $FreshConfigurations = @($MatchedConfigurationsWithIds | ForEach-Object { Get-ITGlueConfigurations -id $_.ITGObject.id -include related_items })
+  $RelatedConfigurations = @($FreshConfigurations | Where-Object {$_.data.relationships.'related-items'.data})
+}
 
-$FreshPasswords = $MatchedPasswords | % {Get-ITGluePasswords -id $_.itgobject.id -include related_items}
-$RelatedPasswords = $FreshPasswords |? {$_.data.relationships.'related-items'.data}
+$MatchedPasswordsWithIds = @($MatchedPasswords | Where-Object {$_.ITGObject -and $_.ITGObject.id})
+if ($MatchedPasswordsWithIds.Count -gt 0) {
+  $FreshPasswords = @($MatchedPasswordsWithIds | ForEach-Object { Get-ITGluePasswords -id $_.ITGObject.id -include related_items })
+  $RelatedPasswords = @($FreshPasswords | Where-Object {$_.data.relationships.'related-items'.data})
+}
 
-
-$ConfigurationRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedConfigurations
-$AssetRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedAssets
-$PasswordRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedPasswords
+if ($RelatedConfigurations.Count -gt 0) {
+  $ConfigurationRelationsToCreate = @(Get-HuduRelationObject -ITGlueSourceObjects $RelatedConfigurations)
+}
+if ($RelatedAssets.Count -gt 0) {
+  $AssetRelationsToCreate = @(Get-HuduRelationObject -ITGlueSourceObjects $RelatedAssets)
+}
+if ($RelatedPasswords.Count -gt 0) {
+  $PasswordRelationsToCreate = @(Get-HuduRelationObject -ITGlueSourceObjects $RelatedPasswords)
+}
 
 <# Uncomment and run the block below
 $createdConfigurationRelations =  $ConfigurationRelationsToCreate | % {New-HuduRelation -FromableType $_.FromableType -FromableID $_.FromableID -ToableID $_.ToableID -ToableType $_.ToableType}

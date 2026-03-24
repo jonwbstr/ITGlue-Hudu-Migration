@@ -2587,12 +2587,45 @@ $MatchedWebsites.HuduObject | Where-Object {$_.id -and $_.id -gt 0} | Foreach-Ob
 write-host "wrapup 2/9... adding attachments (this can take a while)"
 . .\Add-HuduAttachmentsViaAPI.ps1
 
-write-host "wrapup 3/9... adding missing relations (this can take a long while). Some errors may appear but can be safely ignored."
-# set retry to off/false in HuduAPI module, this will save time during adding potentially existent relations.
-if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $true} catch {}}
-. .\Get-MissingRelations.ps1
+$AssetRelationsToCreate = @()
+$ConfigurationRelationsToCreate = @()
+$PasswordRelationsToCreate = @()
 
-@($AssetRelationsToCreate) + @($ConfigurationRelationsToCreate) | ForEach-Object {try {New-HuduRelation -FromableType  $_.FromableType -FromableID    $_.FromableID -ToableType    $_.ToableType -ToableID      $_.ToableID} catch {Write-Host "Skipped or errored: $_" -ForegroundColor Yellow}}
+$FlexibleAssetsImported = $ImportFlexibleAssets -in @($true, 1, '1', 'true', 'True')
+$MissingRelationsRequested = $null
+
+if ($ImportMissingRelations -in @($true, 1, '1', 'true', 'True')) {
+    $MissingRelationsRequested = $true
+} elseif ($ImportMissingRelations -in @($false, 2, '2', 'false', 'False')) {
+    $MissingRelationsRequested = $false
+} elseif ($true -ne $NonInteractive) {
+    $ImportMissingRelationsPrompt = $null
+    while ($ImportMissingRelationsPrompt -notin @('y','n')) {
+        $ImportMissingRelationsPrompt = (Read-Host "wrapup 3/9... import missing relations now? (y/n)").ToLower().Trim()
+    }
+    $MissingRelationsRequested = $ImportMissingRelationsPrompt -eq 'y'
+} else {
+    $MissingRelationsRequested = $true
+}
+
+$MissingRelationsSkipReasons = @()
+if (-not $FlexibleAssetsImported) {
+    $MissingRelationsSkipReasons += "flexible assets were skipped for this run"
+}
+if (-not $MissingRelationsRequested) {
+    $MissingRelationsSkipReasons += "ImportMissingRelations is disabled for this run"
+}
+
+if ($MissingRelationsSkipReasons.Count -gt 0) {
+    Write-Host "wrapup 3/9... skipping missing relations because $($MissingRelationsSkipReasons -join ' and ')." -ForegroundColor Yellow
+} else {
+    write-host "wrapup 3/9... adding missing relations (this can take a long while). Some errors may appear but can be safely ignored."
+    # set retry to off/false in HuduAPI module, this will save time during adding potentially existent relations.
+    if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $true} catch {}}
+    . .\Get-MissingRelations.ps1
+
+    @($AssetRelationsToCreate) + @($ConfigurationRelationsToCreate) | ForEach-Object {try {New-HuduRelation -FromableType  $_.FromableType -FromableID    $_.FromableID -ToableType    $_.ToableType -ToableID      $_.ToableID} catch {Write-Host "Skipped or errored: $_" -ForegroundColor Yellow}}
+}
 
 write-host "wrapup 4/9... archiving passwords, assets, configurations as they had been in ITGlue (this can take a while)"
 $DocsCsv = import-csv "$ITGLueExportPath\documents.csv"

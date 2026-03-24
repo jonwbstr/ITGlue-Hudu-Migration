@@ -80,6 +80,7 @@ $ImportFlexibleAssetLayouts = 1
 $ImportFlexibleAssets       = 1
 $ImportArticles             = 1
 $ImportPasswords            = 1
+$ImportMissingRelations     = 1 # controls the missing-relations phase
 $OptionalImageAnchorReplace = 1
 
 # If you want to have script wait for user interaction between steps. Select 1 for yes, 2 for noninteractive/no
