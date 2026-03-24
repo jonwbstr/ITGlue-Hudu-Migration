@@ -2584,8 +2584,27 @@ $ManualActionsReport = foreach ($item in $UniqueItems) {
 write-host "wrapup 1/9... setting asset layouts as active, enabling advanced website monitoring features"
 foreach ($layout in Get-HuduAssetLayouts) {write-host "setting $($(Set-HuduAssetLayout -id $layout.id -Active $true).asset_layout.name) as active" }
 $MatchedWebsites.HuduObject | Where-Object {$_.id -and $_.id -gt 0} | Foreach-Object {write-host "Enabling advanced monitoring features for $($(Set-HuduWebsite -id $_.id -EnableDMARC 'true' -EnableDKIM 'true' -EnableSPF 'true' -DisableDNS 'false' -DisableSSL 'false' -DisableWhois 'false' -Paused 'false').name)" -ForegroundColor DarkCyan}
-write-host "wrapup 2/9... adding attachments (this can take a while)"
-. .\Add-HuduAttachmentsViaAPI.ps1
+$AttachmentsRequested = $null
+if ($ImportAttachments -in @($true, 1, '1', 'true', 'True')) {
+    $AttachmentsRequested = $true
+} elseif ($ImportAttachments -in @($false, 2, '2', 'false', 'False')) {
+    $AttachmentsRequested = $false
+} elseif ($true -ne $NonInteractive) {
+    $ImportAttachmentsPrompt = $null
+    while ($ImportAttachmentsPrompt -notin @('y','n')) {
+        $ImportAttachmentsPrompt = (Read-Host "wrapup 2/9... import attachments now? (y/n)").ToLower().Trim()
+    }
+    $AttachmentsRequested = $ImportAttachmentsPrompt -eq 'y'
+} else {
+    $AttachmentsRequested = $true
+}
+
+if (-not $AttachmentsRequested) {
+    Write-Host "wrapup 2/9... skipping attachments because ImportAttachments is disabled for this run." -ForegroundColor Yellow
+} else {
+    write-host "wrapup 2/9... adding attachments (this can take a while)"
+    . .\Add-HuduAttachmentsViaAPI.ps1
+}
 
 $AssetRelationsToCreate = @()
 $ConfigurationRelationsToCreate = @()
