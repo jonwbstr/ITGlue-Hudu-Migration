@@ -13,12 +13,6 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 > Depending on the size of your ITGlue instance, the migration script can take several hours to run (we've seen it take as long as 24 hours). As such, it's highly recommended to run the migration script on a Windows Server or a machine that has ***Windows Update and Sleep [temporarily] disabled***
 
 > [!IMPORTANT]
-<<<<<<< Updated upstream
-=======
-<<<<<<< Updated upstream
-> You must be on the ITGlue **Enterprise Plan** (or a legacy plan with API Access) to be able to run the script.
-=======
->>>>>>> Stashed changes
 > You must be on the ITGlue **Enterprise Plan** (or a legacy plan with API Access) to be able to run the migration.
 
 ## Windows executable (recommended)
@@ -27,12 +21,7 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 
 - **How to run:** Clone or download the repository, open the **`release`** folder, and run **`ITGlue-Hudu-Migration.exe`** (double-click or from a terminal). You still need your ITGlue export ZIP, API keys, and a compatible Hudu instance—work through **What you'll need** and **Prerequisites** later in this document before you start.
 - **Settings:** Stored by default under `%APPDATA%\HuduMigration`, same as the PowerShell workflow.
-<<<<<<< Updated upstream
-- **Use PowerShell instead** if you rely on a customized **`environ.example`**, want full session control over variables, or need post-run scripts such as **`Get-MissingRelations.ps1`**, **`Move-AssetsToNewLayout.ps1`**, **`Add-HuduAttachmentsViaAPI.ps1`**, or **`Replace-HuduBase64Images.ps1`** (these are not launched by the executable). See **Prerequisites - Migration Script Setup** below.
-=======
-- **Use PowerShell instead** if you hand-edit **`environ.example`** beyond what the app can represent, or you want variables and state to persist in your session after the run. The executable generates **`migrationrun.ps1`** from the template, runs it from the repo folder with PowerShell 7, and that script dot-sources **`ITGlue-Hudu-Migration.ps1`**—the same path as a typical environ-style launch. The main script’s wrap-up dot-sources **`Add-HuduAttachmentsViaAPI.ps1`** and **`Get-MissingRelations.ps1`** when the run reaches that stage (including when launched from the exe), unless the migration stops earlier. **`Move-AssetsToNewLayout.ps1`** and **`Replace-HuduBase64Images.ps1`** are optional workflows **not** called by the main script; run those yourself when needed. See **Prerequisites - Migration Script Setup** below.
->>>>>>> Stashed changes
->>>>>>> Stashed changes
+- **Use PowerShell instead** if you hand-edit **`environ.example`** beyond what the app can represent, or you want variables and state to persist in your session after the run. The executable generates **`migrationrun.ps1`** from the template, runs it from the repo folder with PowerShell 7, and that script dot-sources **`ITGlue-Hudu-Migration.ps1`**—the same path as a typical environ-style launch. The main script's wrap-up dot-sources **`Add-HuduAttachmentsViaAPI.ps1`** and **`Get-MissingRelations.ps1`** when the run reaches that stage (including when launched from the exe), unless the migration stops earlier. **`Move-AssetsToNewLayout.ps1`** and **`Replace-HuduBase64Images.ps1`** are optional workflows **not** called by the main script; run those yourself when needed. See **Prerequisites - Migration Script Setup** below.
 
 ## What the script can migrate currently:
 - Companies
