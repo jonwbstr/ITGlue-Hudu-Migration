@@ -87,6 +87,77 @@ function Get-NetworkChain {
 # --- helpers for extraction / normalization -----------------------------------
 function Get-AsArray { param($x) if ($null -eq $x) { @() } elseif ($x -is [System.Collections.IEnumerable] -and -not ($x -is [string])) { @($x) } else { ,$x } }
 
+function Resolve-IntScalar {
+  param(
+    $Value,
+    [string]$Context = 'value'
+  )
+
+  $candidates = New-Object System.Collections.Generic.List[int]
+
+  foreach ($item in (Get-AsArray $Value)) {
+    if ($null -eq $item) { continue }
+
+    if ($item -is [int]) {
+      $candidates.Add([int]$item) | Out-Null
+      continue
+    }
+
+    $itemText = if ($item.PSObject.Properties['id']) {
+      "$($item.id)"
+    } else {
+      "$item"
+    }
+
+    foreach ($match in ([regex]::Matches($itemText, '(?<!\d)\d+(?!\d)'))) {
+      $candidates.Add([int]$match.Value) | Out-Null
+    }
+  }
+
+  $uniqueValues = @($candidates | Select-Object -Unique)
+  if ($uniqueValues.Count -gt 1) {
+    Write-Warning "$Context resolved to multiple IDs ($($uniqueValues -join ', ')); using the first value for IPAM."
+  }
+
+  if ($uniqueValues.Count -gt 0) {
+    return [int]$uniqueValues[0]
+  }
+
+  return $null
+}
+
+function Resolve-HuduAssetMatch {
+  param(
+    $AssetCandidate,
+    [string]$Context = 'asset'
+  )
+
+  $assets = @(
+    Get-AsArray $AssetCandidate |
+      Where-Object {
+        $null -ne $_ -and
+        $null -ne $_.PSObject -and
+        $null -ne $_.PSObject.Properties['id'] -and
+        $null -ne $_.id
+      }
+  )
+
+  if ($assets.Count -eq 0) { return $null }
+
+  $uniqueAssets = @(
+    $assets |
+      Group-Object { "$(Resolve-IntScalar -Value $_.id -Context $Context)" } |
+      ForEach-Object { $_.Group | Select-Object -First 1 }
+  )
+
+  if ($uniqueAssets.Count -gt 1) {
+    $assetIds = @($uniqueAssets | ForEach-Object { Resolve-IntScalar -Value $_.id -Context $Context } | Where-Object { $null -ne $_ })
+    Write-Warning "$Context matched multiple Hudu assets ($($assetIds -join ', ')); using the first asset for IPAM."
+  }
+
+  return @($uniqueAssets | Select-Object -First 1)[0]
+}
+
 function Get-HuduAssetFieldValue {
   param(
     [Parameter(Mandatory)]$Asset,
@@ -274,10 +345,23 @@ function Invoke-HuduConfigurationIPAMSync {
   $IPAMResults = [System.Collections.ArrayList]@()
 
   $configsWithCompanies = @(
-    $MatchedConfigurations | Where-Object {
-      $null -ne $_.HuduID -and
-      $null -ne $_.HuduObject -and
-      $null -ne $_.HuduObject.company_id
+    foreach ($matchedConfig in (Get-AsArray $MatchedConfigurations)) {
+      if ($null -eq $matchedConfig) { continue }
+
+      $resolvedHuduObject = Resolve-HuduAssetMatch -AssetCandidate $matchedConfig.HuduObject -Context "Configuration ITGID $($matchedConfig.ITGID)"
+      if ($null -eq $resolvedHuduObject) { continue }
+
+      $resolvedCompanyId = Resolve-IntScalar -Value $resolvedHuduObject.company_id -Context "Configuration ITGID $($matchedConfig.ITGID) company_id"
+      if ($null -eq $resolvedCompanyId) { continue }
+
+      $resolvedHuduId = Resolve-IntScalar -Value @($resolvedHuduObject.id, $matchedConfig.HuduID) -Context "Configuration ITGID $($matchedConfig.ITGID) asset id"
+
+      [pscustomobject]@{
+        MatchedConfiguration = $matchedConfig
+        HuduObject           = $resolvedHuduObject
+        CompanyId            = $resolvedCompanyId
+        HuduID               = $resolvedHuduId
+      }
     }
   )
 
@@ -286,21 +370,29 @@ function Invoke-HuduConfigurationIPAMSync {
     return
   }
 
-  $configGroups = $configsWithCompanies | Group-Object { "$($_.HuduObject.company_id)" } -AsHashTable -AsString
+  $configGroups = $configsWithCompanies | Group-Object { "$($_.CompanyId)" } -AsHashTable -AsString
 
   foreach ($companyIdKey in $configGroups.Keys) {
     $configsForCompany = @($configGroups[$companyIdKey])
     if ($configsForCompany.Count -eq 0) { continue }
     $CompanyResults = @{}
 
-    [int]$companyId = $companyIdKey
+    $companyId = Resolve-IntScalar -Value $companyIdKey -Context 'IPAM company group'
+    if ($null -eq $companyId) {
+      Write-Warning "Skipping IPAM company group with an unreadable company ID key: $companyIdKey"
+      continue
+    }
     Write-Host "Company ID $companyId has $($configsForCompany.Count) matched configurations for IPAM processing"
 
     $configCollection = @(
-      foreach ($matchedConfig in $configsForCompany) {
-        $primaryIp = Get-HuduAssetFieldValue -Asset $matchedConfig.HuduObject -Label 'Primary IP'
-        $defaultGateway = Get-HuduAssetFieldValue -Asset $matchedConfig.HuduObject -Label 'Default Gateway'
-        $hostname = Get-HuduAssetFieldValue -Asset $matchedConfig.HuduObject -Label 'Hostname'
+      foreach ($configEntry in $configsForCompany) {
+        $matchedConfig = $configEntry.MatchedConfiguration
+        $resolvedHuduObject = $configEntry.HuduObject
+        $resolvedHuduId = $configEntry.HuduID
+
+        $primaryIp = Get-HuduAssetFieldValue -Asset $resolvedHuduObject -Label 'Primary IP'
+        $defaultGateway = Get-HuduAssetFieldValue -Asset $resolvedHuduObject -Label 'Default Gateway'
+        $hostname = Get-HuduAssetFieldValue -Asset $resolvedHuduObject -Label 'Hostname'
 
         if ([string]::IsNullOrWhiteSpace("$primaryIp")) {
           $primaryIp = $matchedConfig.ITGObject.attributes.'primary-ip'
@@ -320,8 +412,8 @@ function Invoke-HuduConfigurationIPAMSync {
           default_gateway          = $defaultGateway
           hostname                 = $hostname
           configuration_interfaces = $matchedConfig.ITGObject.attributes.'configuration-interfaces'
-          HuduObject               = $matchedConfig.HuduObject
-          HuduID                   = $matchedConfig.HuduID
+          HuduObject               = $resolvedHuduObject
+          HuduID                   = $resolvedHuduId
         }
       }
     )
@@ -379,9 +471,9 @@ function Invoke-HuduConfigurationIPAMSync {
     $assetIdsByIp = @{}
     foreach ($row in $configCollection) {
       foreach ($ip in Extract-IPv4sFromString -Text $row.primary_ip) {
-        $assetId = $row.HuduObject.id
+        $assetId = Resolve-IntScalar -Value $row.HuduObject.id -Context "IP $ip HuduObject.id"
         if (-not $assetId) {
-          $assetId = $row.HuduID
+          $assetId = Resolve-IntScalar -Value $row.HuduID -Context "IP $ip HuduID"
         }
 
         if (-not $assetIdsByIp.ContainsKey($ip) -and $assetId) {
